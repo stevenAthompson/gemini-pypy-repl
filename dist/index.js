@@ -126,44 +126,81 @@ def __gemini_run_repl(code_b64):
             });
         });
     }
-    async execute(code) {
-        const executable = await this.start();
-        const marker = `__REPL_DONE_${Math.random().toString(36).substring(7)}__`;
-        let stdout = '';
-        let stderr = '';
-        return new Promise((resolve) => {
-            const onStdout = (data) => {
-                if (data.includes(marker)) {
-                    stdout += data.replace(marker, '');
-                    cleanup();
-                    resolve({ stdout: stdout.trim(), stderr: stderr.trim(), executable });
-                }
-                else {
-                    stdout += data;
-                }
-            };
-            const onStderr = (data) => {
-                const lines = data.split('\n');
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (trimmed === '>>>' || trimmed === '...' || trimmed === '' || trimmed.startsWith('Python ') || trimmed.startsWith('Type "help"')) {
-                        continue;
+    busy = false;
+    maxOutputSize = 100 * 1024; // 100KB
+    async execute(code, timeoutMs = 30000) {
+        if (this.busy) {
+            throw new Error('REPL is busy executing another command. Use "reset_repl" if it is stuck.');
+        }
+        this.busy = true;
+        try {
+            const executable = await this.start();
+            // Check if process is still alive
+            if (!this.process || this.process.killed) {
+                console.error('REPL process died, restarting...');
+                this.process = null; // Force restart
+                await this.start();
+            }
+            const marker = `__REPL_DONE_${Math.random().toString(36).substring(7)}__`;
+            let stdout = '';
+            let stderr = '';
+            let timer;
+            const promise = new Promise((resolve, reject) => {
+                const onStdout = (data) => {
+                    if (stdout.length < this.maxOutputSize) {
+                        stdout += data;
                     }
-                    stderr += line + '\n';
-                }
-            };
-            const cleanup = () => {
-                this.removeListener('stdout', onStdout);
-                this.removeListener('stderr', onStderr);
-            };
-            this.on('stdout', onStdout);
-            this.on('stderr', onStderr);
-            const b64Code = Buffer.from(code).toString('base64');
-            this.writeStdin(`__gemini_run_repl("${b64Code}")\nprint("${marker}")\n`).catch(err => {
-                cleanup();
-                resolve({ stdout: '', stderr: `Error writing to stdin: ${err.message}`, executable });
+                    if (stdout.includes(marker)) {
+                        stdout = stdout.replace(marker, '');
+                        // If truncated, add message
+                        if (stdout.length >= this.maxOutputSize) {
+                            stdout += `\n...[Output truncated to ${this.maxOutputSize} bytes]...`;
+                        }
+                        cleanup();
+                        resolve({ stdout: stdout.trim(), stderr: stderr.trim(), executable });
+                    }
+                };
+                const onStderr = (data) => {
+                    const lines = data.split('\n');
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (trimmed === '>>>' || trimmed === '...' || trimmed === '' || trimmed.startsWith('Python ') || trimmed.startsWith('Type "help"')) {
+                            continue;
+                        }
+                        if (stderr.length < this.maxOutputSize) {
+                            stderr += line + '\n';
+                        }
+                    }
+                };
+                const cleanup = () => {
+                    clearTimeout(timer);
+                    this.removeListener('stdout', onStdout);
+                    this.removeListener('stderr', onStderr);
+                };
+                this.on('stdout', onStdout);
+                this.on('stderr', onStderr);
+                const b64Code = Buffer.from(code).toString('base64');
+                this.writeStdin(`__gemini_run_repl("${b64Code}")\nprint("${marker}")\n`).catch(err => {
+                    cleanup();
+                    // If write fails (EPIPE), it usually means process died.
+                    // We let the next call handle restart, but here we fail.
+                    reject(new Error(`Error writing to stdin: ${err.message}`));
+                });
             });
-        });
+            // Timeout Logic
+            const timeoutPromise = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    // Send SIGINT to try to break loop
+                    if (this.process)
+                        this.process.kill('SIGINT');
+                    reject(new Error(`Execution timed out after ${timeoutMs}ms`));
+                }, timeoutMs);
+            });
+            return await Promise.race([promise, timeoutPromise]);
+        }
+        finally {
+            this.busy = false;
+        }
     }
     async pipInstall(packages) {
         const python = await this.ensureVenv();
@@ -208,15 +245,19 @@ server.registerTool('pypy_repl', {
     inputSchema: z.object({
         code: z.string().describe('The Python code to execute.'),
         async: z.boolean().optional().describe('If true, runs code in the background and notifies via tmux when done.'),
+        timeout: z.number().optional().describe('Timeout in milliseconds for synchronous execution (default 30000). Ignored if async is true.'),
     }),
-}, async ({ code, async }) => {
+}, async ({ code, async, timeout }) => {
     if (async) {
         const id = Math.random().toString(36).substring(7).toUpperCase();
         const tmpDir = path.join(process.cwd(), '.gemini-repl', 'tmp');
         if (!fs.existsSync(tmpDir))
             fs.mkdirSync(tmpDir, { recursive: true });
         const outputPath = path.join(tmpDir, `gemini_repl_${id}.txt`);
-        repl.execute(code).then((result) => {
+        // Pass a very long timeout for async, or handle it differently.
+        // Since we don't await, the Promise.race in execute will run in background.
+        // We set a 1-hour timeout for async tasks.
+        repl.execute(code, 3600000).then((result) => {
             let output = '';
             if (result.stdout)
                 output += result.stdout;
@@ -244,7 +285,7 @@ server.registerTool('pypy_repl', {
         };
     }
     try {
-        const result = await repl.execute(code);
+        const result = await repl.execute(code, timeout);
         let output = '';
         if (result.stdout)
             output += result.stdout;

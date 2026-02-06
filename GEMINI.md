@@ -8,6 +8,7 @@ A python sandbox for gemini cli providing REPL like testing and debugging using 
 Executes Python code in a persistent PyPy/Python REPL session and returns the output. Maintains state between calls. Runs inside a dedicated virtual environment and workspace.
 - `code`: The Python code to execute.
 - `async`: (Optional) If true, runs code in the background and notifies via tmux when done. Use for long-running tasks.
+- `timeout`: (Optional) Execution timeout in milliseconds (default 30000). Ignored if async is true.
 
 ### pip_install
 Installs Python packages into the REPL virtual environment.
