@@ -15,13 +15,19 @@ import * as fs from 'fs';
 export class ReplManager extends EventEmitter {
     private process: ChildProcess | null = null;
     private actualExecutable: string | null = null;
+    private baseDir: string;
     private venvPath: string;
     private workspacePath: string;
 
     constructor() {
         super();
-        this.venvPath = path.join(process.cwd(), '.venv');
-        this.workspacePath = path.join(process.cwd(), 'workspace');
+        this.baseDir = path.join(process.cwd(), '.gemini-repl');
+        this.venvPath = path.join(this.baseDir, 'venv');
+        this.workspacePath = path.join(this.baseDir, 'workspace');
+        
+        if (!fs.existsSync(this.baseDir)) {
+            fs.mkdirSync(this.baseDir, { recursive: true });
+        }
     }
 
     private async findSystemPython(): Promise<string> {
@@ -42,7 +48,7 @@ export class ReplManager extends EventEmitter {
 
     private async ensureVenv(): Promise<string> {
         if (!fs.existsSync(this.venvPath)) {
-            console.error('Creating virtual environment...');
+            console.error('Creating virtual environment in .gemini-repl/venv...');
             const systemPython = await this.findSystemPython();
             execSync(`${systemPython} -m venv ${this.venvPath}`);
         }
@@ -230,7 +236,7 @@ server.registerTool(
   async ({ code, async }) => {
     if (async) {
         const id = Math.random().toString(36).substring(7).toUpperCase();
-        const tmpDir = path.join(process.cwd(), 'tmp');
+        const tmpDir = path.join(process.cwd(), '.gemini-repl', 'tmp');
         if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
         const outputPath = path.join(tmpDir, `gemini_repl_${id}.txt`);
         
@@ -354,8 +360,8 @@ server.registerTool(
     }),
   },
   async ({ all }) => {
-    const tmpDir = path.join(process.cwd(), 'tmp');
-    const workspaceDir = path.join(process.cwd(), 'workspace');
+    const tmpDir = path.join(process.cwd(), '.gemini-repl', 'tmp');
+    const workspaceDir = path.join(process.cwd(), '.gemini-repl', 'workspace');
     let msg = '';
 
     if (fs.existsSync(tmpDir)) {
