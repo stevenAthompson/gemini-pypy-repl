@@ -9,6 +9,7 @@ This extension provides a persistent, stateful Python (or PyPy) REPL environment
 *   **Isolated Environment**: Automatically creates a `.venv` in the `.gemini-repl` folder. No pollution of your global Python setup.
 *   **Package Management**: Gemini can self-service dependencies using `pip_install`.
 *   **Dedicated Workspace**: All files created by the agent land in `.gemini-repl/workspace/`, keeping your project root clean.
+*   **Project Access**: Use the `PROJECT_ROOT` variable to access files outside the workspace (e.g., `open(f"{PROJECT_ROOT}/logs/app.log")`).
 *   **Accuracy**: Gemini can write code to calculate answers instead of guessing.
 *   **Stateful**: Variables and functions persist between turns.
 *   **Speed**: Prefers `pypy3` for fast execution if available.
@@ -33,6 +34,7 @@ gemini extension install https://github.com/stevenAthompson/gemini-pypy-repl
 
 *   **Install Packages**: "Install numpy and pandas for me."
 *   **Process Files**: "Read the CSV file in the workspace and give me a summary."
+*   **Read Project Logs**: "Analyze `logs/error.log` from the project root."
 *   **Long Computations**: "Run this simulation in the background."
 
 ## Tools Included

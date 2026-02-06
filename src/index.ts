@@ -96,12 +96,18 @@ export class ReplManager extends EventEmitter {
             this.process = null;
         });
 
+        // Escape backslashes for Windows paths
+        const projectRoot = process.cwd().replace(/\\/g, '\\\\');
+
         const initScript = `
 import ast
 import base64
 import sys
 import os
 import builtins
+
+# Constants for easy access
+PROJECT_ROOT = "${projectRoot}"
 
 # Ensure workspace is in path
 sys.path.append(os.getcwd())
@@ -211,10 +217,12 @@ print("__REPL_READY__")
                     const lines = data.split('\n');
                     for (const line of lines) {
                         const trimmed = line.trim();
-                        // Filter standard prompts and multi-prompts
-                        if (trimmed === '>>>' || trimmed === '...' || trimmed === '' || 
-                            trimmed.startsWith('Python ') || trimmed.startsWith('Type "help"') ||
-                            trimmed.replace(/>/g, '').trim() === '') { 
+                        // Aggressive filter for prompts (>>> or ... repeats)
+                        if (trimmed === '' || 
+                            /^>{3,}(\s*>{3,})*$/.test(trimmed) || 
+                            /^\.{3,}(\s*\.{3,})*$/.test(trimmed) || 
+                            trimmed.startsWith('Python ') || 
+                            trimmed.startsWith('Type "help"')) {
                             continue;
                         }
                         if (stderr.length < this.maxOutputSize) {
