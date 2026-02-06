@@ -16,7 +16,7 @@ This extension provides a persistent, stateful Python (or PyPy) REPL environment
 Run the following command in your Gemini CLI:
 
 ```bash
-gemini extension install https://github.com/<your-username>/gemini-pypy-repl
+gemini extension install https://github.com/stevenAthompson/gemini-pypy-repl
 ```
 
 ## Usage
