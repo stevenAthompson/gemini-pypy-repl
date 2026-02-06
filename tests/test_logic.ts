@@ -42,7 +42,17 @@ async function runTests() {
         assert.strictEqual(r7.stdout.length, 1000);
         console.log('  Passed');
 
-        console.log('\nAll V2.2 tests passed successfully!');
+        // Test 8: Input Guard
+        console.log('Test 8: Input Guard');
+        const r8 = await repl.execute('input("fail me")');
+        if (!r8.stderr.includes('input(): lost sys.stdin')) {
+            console.error('STDERR:', r8.stderr);
+            console.error('STDOUT:', r8.stdout);
+        }
+        assert.ok(r8.stderr.includes('input(): lost sys.stdin'), 'input() should raise RuntimeError (lost sys.stdin)');
+        console.log('  Passed');
+
+        console.log('\nAll V2.3 tests passed successfully!');
     } catch (err) {
         console.error('\nTest failed:');
         console.error(err);

@@ -31,7 +31,9 @@ Cleans up temporary files and workspace artifacts.
 - **Debugging**: If a script fails, use the REPL to inspect variables or test small snippets.
 - **PyPy Advantage**: This environment is ideal for computationally intensive tasks.
 - **Safe Encoding**: Code is transported using base64 encoding.
-- **Error Handling**: Standard error output is captured and returned. 
+- **Error Handling**: Standard error output is captured and returned.
+- **No Interactive Input**: Do not use `input()` in your Python code. It is disabled and will raise a `RuntimeError`. If you need to simulate input, hardcode it or use variables.
+- **Pip Limitations**: If `pip_install` fails, it may be due to missing OS-level dependencies. In that case, look for pure-Python alternatives or explain the limitation to the user. 
 
 
 # IMPORTANT NOTES

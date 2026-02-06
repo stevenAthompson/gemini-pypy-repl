@@ -6,7 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, ChildProcess, execSync, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
@@ -18,6 +18,8 @@ export class ReplManager extends EventEmitter {
     private baseDir: string;
     private venvPath: string;
     private workspacePath: string;
+    private busy: boolean = false;
+    private maxOutputSize = 100 * 1024; // 100KB
 
     constructor() {
         super();
@@ -50,7 +52,10 @@ export class ReplManager extends EventEmitter {
         if (!fs.existsSync(this.venvPath)) {
             console.error('Creating virtual environment in .gemini-repl/venv...');
             const systemPython = await this.findSystemPython();
-            execSync(`${systemPython} -m venv ${this.venvPath}`);
+            // Use spawnSync to safely handle paths with spaces
+            const result = spawnSync(systemPython, ['-m', 'venv', this.venvPath], { stdio: 'inherit' });
+            if (result.error) throw result.error;
+            if (result.status !== 0) throw new Error(`Failed to create venv. Exit code: ${result.status}`);
         }
 
         // Determine venv python path (windows vs linux)
@@ -96,9 +101,14 @@ import ast
 import base64
 import sys
 import os
+import builtins
 
 # Ensure workspace is in path
 sys.path.append(os.getcwd())
+
+# Disable interactive input to prevent hanging
+# Setting sys.stdin to None causes input() to raise RuntimeError immediately
+sys.stdin = None
 
 def __gemini_run_repl(code_b64):
     try:
@@ -122,9 +132,32 @@ def __gemini_run_repl(code_b64):
     except Exception as e:
         import traceback
         traceback.print_exc(file=sys.stderr)
+
+print("__REPL_READY__")
 `;
         await this.writeStdin(initScript + '\n');
-        return this.actualExecutable;
+
+        // Wait for ready marker
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                cleanup();
+                reject(new Error('Timed out waiting for REPL startup'));
+            }, 10000);
+
+            const onStdout = (data: string) => {
+                if (data.includes('__REPL_READY__')) {
+                    cleanup();
+                    resolve(this.actualExecutable!);
+                }
+            };
+
+            const cleanup = () => {
+                clearTimeout(timeout);
+                this.removeListener('stdout', onStdout);
+            };
+
+            this.on('stdout', onStdout);
+        });
     }
 
     private async writeStdin(data: string): Promise<void> {
@@ -136,9 +169,6 @@ def __gemini_run_repl(code_b64):
             });
         });
     }
-
-    private busy: boolean = false;
-    private maxOutputSize = 100 * 1024; // 100KB
 
     async execute(code: string, timeoutMs: number = 30000): Promise<{ stdout: string; stderr: string; executable: string }> {
         if (this.busy) {
@@ -290,7 +320,8 @@ server.registerTool(
             if (result.stdout) output += result.stdout;
             if (result.stderr) {
                 if (output) output += '\n';
-                output += `--- STDERR ---\n${result.stderr}`;
+                output += `--- STDERR ---
+${result.stderr}`;
             }
             if (!output) output = '(No output)';
             output += `\n(Executed using ${result.executable})`;
@@ -317,7 +348,8 @@ server.registerTool(
       if (result.stdout) output += result.stdout;
       if (result.stderr) {
         if (output) output += '\n';
-        output += `--- STDERR ---\n${result.stderr}`;
+        output += `--- STDERR ---
+${result.stderr}`;
       }
       
       const footer = `\n(Executed using ${result.executable})`;
