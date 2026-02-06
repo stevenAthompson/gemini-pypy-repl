@@ -9,7 +9,8 @@ import { z } from 'zod';
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
-import path from 'path';
+import * as path from 'path';
+import * as fs from 'fs';
 
 export class ReplManager extends EventEmitter {
     private process: ChildProcess | null = null;
@@ -165,15 +166,71 @@ const server = new McpServer({
   version: '0.1.0',
 });
 
+// Helper to spawn notification worker
+function notifyCompletion(id: string, exitCode: number, outputPath: string) {
+    const currentFile = fileURLToPath(import.meta.url);
+    // Determine path to notify.js. If we are in dist/index.js, it's in dist/notify.js
+    const scriptDir = path.dirname(currentFile);
+    const notifyScript = path.join(scriptDir, 'notify.js');
+    
+    // Spawn detached
+    spawn(process.execPath, [notifyScript, id, exitCode.toString(), outputPath], {
+        detached: true,
+        stdio: 'ignore'
+    }).unref();
+}
+
 server.registerTool(
   'pypy_repl',
   {
     description: 'Executes Python code in a persistent PyPy/Python REPL session and returns the output. The session maintains state (variables, functions, imports) between calls.',
     inputSchema: z.object({
       code: z.string().describe('The Python code to execute.'),
+      async: z.boolean().optional().describe('If true, runs code in the background and notifies via tmux when done. Use for long-running tasks.'),
     }),
   },
-  async ({ code }) => {
+  async ({ code, async }) => {
+    if (async) {
+        const id = Math.random().toString(36).substring(7).toUpperCase();
+        const tmpDir = path.join(process.cwd(), 'tmp'); // Assuming tmp exists or we create it
+        if (!fs.existsSync(tmpDir)) {
+            fs.mkdirSync(tmpDir, { recursive: true });
+        }
+        const outputPath = path.join(tmpDir, `gemini_repl_${id}.txt`);
+        
+        // Start execution but don't await the result for the API response
+        repl.execute(code).then((result) => {
+            let output = '';
+            if (result.stdout) output += result.stdout;
+            if (result.stderr) {
+                if (output) output += '\n';
+                output += `--- STDERR ---
+${result.stderr}`;
+            }
+            if (!output) output = '(No output)';
+            
+            output += `\n(Executed using ${result.executable})`;
+            
+            fs.writeFileSync(outputPath, output);
+            
+            // Exit code is always 0 for REPL unless the process crashed
+            notifyCompletion(id, 0, outputPath);
+        }).catch((err) => {
+            const errorMsg = `Error: ${err.message}`;
+            fs.writeFileSync(outputPath, errorMsg);
+            notifyCompletion(id, 1, outputPath);
+        });
+
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: `[${id}] Task started in background. I will notify you via tmux when it completes.\nOutput will be written to: ${outputPath}`,
+                },
+            ],
+        };
+    }
+
     try {
       const result = await repl.execute(code);
       let output = '';
@@ -184,8 +241,7 @@ server.registerTool(
 ${result.stderr}`;
       }
       
-      const footer = `
-(Executed using ${result.executable})`;
+      const footer = `\n(Executed using ${result.executable})`;
 
       return {
         content: [
