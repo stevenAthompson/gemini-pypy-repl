@@ -27,6 +27,8 @@ Cleans up temporary files and workspace artifacts.
 - **Self-Service Dependencies**: If you need a library that isn't installed, use `pip_install`. Don't ask the user to install it for you.
 - **Workspace Hygiene**: Use `cleanup_repl(all=true)` when you are done with a complex project to keep the user's system tidy.
 - **Persistent State**: Use the persistent nature of the REPL to build complex logic across multiple turns.
+    - **Note**: State is held in memory. If the extension restarts (e.g., after an update), state is lost. Use `workspace/` files for long-term persistence.
+- **Project Access**: A global variable `PROJECT_ROOT` is available in the REPL. Use it to access files outside the isolated workspace (e.g., `open(f"{PROJECT_ROOT}/src/main.ts")`).
 - **Auto-Printing**: The REPL automatically prints the value of the last expression in a block.
 - **Debugging**: If a script fails, use the REPL to inspect variables or test small snippets.
 - **PyPy Advantage**: This environment is ideal for computationally intensive tasks.
