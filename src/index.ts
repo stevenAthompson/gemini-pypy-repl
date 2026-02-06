@@ -211,7 +211,10 @@ print("__REPL_READY__")
                     const lines = data.split('\n');
                     for (const line of lines) {
                         const trimmed = line.trim();
-                        if (trimmed === '>>>' || trimmed === '...' || trimmed === '' || trimmed.startsWith('Python ') || trimmed.startsWith('Type "help"')) {
+                        // Filter standard prompts and multi-prompts
+                        if (trimmed === '>>>' || trimmed === '...' || trimmed === '' || 
+                            trimmed.startsWith('Python ') || trimmed.startsWith('Type "help"') ||
+                            trimmed.replace(/>/g, '').trim() === '') { 
                             continue;
                         }
                         if (stderr.length < this.maxOutputSize) {
