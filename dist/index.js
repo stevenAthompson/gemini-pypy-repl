@@ -5,21 +5,22 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
-import path from 'path';
+import * as path from 'path';
+import * as fs from 'fs';
 export class ReplManager extends EventEmitter {
     process = null;
-    executable;
     actualExecutable = null;
-    constructor(executable = 'pypy3') {
+    venvPath;
+    workspacePath;
+    constructor() {
         super();
-        this.executable = executable;
+        this.venvPath = path.join(process.cwd(), '.venv');
+        this.workspacePath = path.join(process.cwd(), 'workspace');
     }
-    async start() {
-        if (this.process && this.actualExecutable)
-            return this.actualExecutable;
+    async findSystemPython() {
         const tryExec = async (cmd) => {
             return new Promise((resolve) => {
                 const check = spawn(cmd, ['--version']);
@@ -27,23 +28,41 @@ export class ReplManager extends EventEmitter {
                 check.on('close', (code) => resolve(code === 0));
             });
         };
-        if (await tryExec('pypy3')) {
-            this.actualExecutable = 'pypy3';
+        if (await tryExec('pypy3'))
+            return 'pypy3';
+        if (await tryExec('pypy'))
+            return 'pypy';
+        if (await tryExec('python3'))
+            return 'python3';
+        if (await tryExec('python'))
+            return 'python';
+        throw new Error('No Python or PyPy executable found in PATH.');
+    }
+    async ensureVenv() {
+        if (!fs.existsSync(this.venvPath)) {
+            console.error('Creating virtual environment...');
+            const systemPython = await this.findSystemPython();
+            execSync(`${systemPython} -m venv ${this.venvPath}`);
         }
-        else if (await tryExec('pypy')) {
-            this.actualExecutable = 'pypy';
+        // Determine venv python path (windows vs linux)
+        const venvPython = process.platform === 'win32'
+            ? path.join(this.venvPath, 'Scripts', 'python.exe')
+            : path.join(this.venvPath, 'bin', 'python');
+        return venvPython;
+    }
+    ensureWorkspace() {
+        if (!fs.existsSync(this.workspacePath)) {
+            fs.mkdirSync(this.workspacePath, { recursive: true });
         }
-        else if (await tryExec('python3')) {
-            this.actualExecutable = 'python3';
-        }
-        else if (await tryExec('python')) {
-            this.actualExecutable = 'python';
-        }
-        else {
-            throw new Error('No Python or PyPy executable found in PATH.');
-        }
+    }
+    async start() {
+        if (this.process && this.actualExecutable)
+            return this.actualExecutable;
+        this.actualExecutable = await this.ensureVenv();
+        this.ensureWorkspace();
         this.process = spawn(this.actualExecutable, ['-i', '-u'], {
             stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: this.workspacePath,
             env: { ...process.env, PYTHONUNBUFFERED: '1' }
         });
         this.process.stdout?.on('data', (data) => {
@@ -59,6 +78,10 @@ export class ReplManager extends EventEmitter {
 import ast
 import base64
 import sys
+import os
+
+# Ensure workspace is in path
+sys.path.append(os.getcwd())
 
 def __gemini_run_repl(code_b64):
     try:
@@ -115,7 +138,6 @@ def __gemini_run_repl(code_b64):
                 }
             };
             const onStderr = (data) => {
-                // Filter out interactive prompts and version header
                 const lines = data.split('\n');
                 for (const line of lines) {
                     const trimmed = line.trim();
@@ -138,6 +160,21 @@ def __gemini_run_repl(code_b64):
             });
         });
     }
+    async pipInstall(packages) {
+        const python = await this.ensureVenv();
+        return new Promise((resolve, reject) => {
+            const child = spawn(python, ['-m', 'pip', 'install', ...packages]);
+            let output = '';
+            child.stdout.on('data', (data) => output += data.toString());
+            child.stderr.on('data', (data) => output += data.toString());
+            child.on('close', (code) => {
+                if (code === 0)
+                    resolve(output);
+                else
+                    reject(new Error(`Pip install failed with code ${code}:\n${output}`));
+            });
+        });
+    }
     reset() {
         if (this.process) {
             this.process.kill();
@@ -149,14 +186,58 @@ def __gemini_run_repl(code_b64):
 const repl = new ReplManager();
 const server = new McpServer({
     name: 'gemini-pypy-repl',
-    version: '0.1.0',
+    version: '0.2.0',
 });
+// Helper to spawn notification worker
+function notifyCompletion(id, exitCode, outputPath) {
+    const currentFile = fileURLToPath(import.meta.url);
+    const scriptDir = path.dirname(currentFile);
+    const notifyScript = path.join(scriptDir, 'notify.js');
+    spawn(process.execPath, [notifyScript, id, exitCode.toString(), outputPath], {
+        detached: true,
+        stdio: 'ignore'
+    }).unref();
+}
 server.registerTool('pypy_repl', {
-    description: 'Executes Python code in a persistent PyPy/Python REPL session and returns the output. The session maintains state (variables, functions, imports) between calls.',
+    description: 'Executes Python code in a persistent PyPy/Python REPL session and returns the output. Maintains state between calls. Runs inside a dedicated virtual environment and workspace.',
     inputSchema: z.object({
         code: z.string().describe('The Python code to execute.'),
+        async: z.boolean().optional().describe('If true, runs code in the background and notifies via tmux when done.'),
     }),
-}, async ({ code }) => {
+}, async ({ code, async }) => {
+    if (async) {
+        const id = Math.random().toString(36).substring(7).toUpperCase();
+        const tmpDir = path.join(process.cwd(), 'tmp');
+        if (!fs.existsSync(tmpDir))
+            fs.mkdirSync(tmpDir, { recursive: true });
+        const outputPath = path.join(tmpDir, `gemini_repl_${id}.txt`);
+        repl.execute(code).then((result) => {
+            let output = '';
+            if (result.stdout)
+                output += result.stdout;
+            if (result.stderr) {
+                if (output)
+                    output += '\n';
+                output += `--- STDERR ---\n${result.stderr}`;
+            }
+            if (!output)
+                output = '(No output)';
+            output += `\n(Executed using ${result.executable})`;
+            fs.writeFileSync(outputPath, output);
+            notifyCompletion(id, 0, outputPath);
+        }).catch((err) => {
+            fs.writeFileSync(outputPath, `Error: ${err.message}`);
+            notifyCompletion(id, 1, outputPath);
+        });
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: `[${id}] Task started in background. I will notify you via tmux when it completes.\nOutput path: ${outputPath}`,
+                },
+            ],
+        };
+    }
     try {
         const result = await repl.execute(code);
         let output = '';
@@ -165,11 +246,9 @@ server.registerTool('pypy_repl', {
         if (result.stderr) {
             if (output)
                 output += '\n';
-            output += `--- STDERR ---
-${result.stderr}`;
+            output += `--- STDERR ---\n${result.stderr}`;
         }
-        const footer = `
-(Executed using ${result.executable})`;
+        const footer = `\n(Executed using ${result.executable})`;
         return {
             content: [
                 {
@@ -191,6 +270,35 @@ ${result.stderr}`;
         };
     }
 });
+server.registerTool('pip_install', {
+    description: 'Installs Python packages into the REPL virtual environment.',
+    inputSchema: z.object({
+        packages: z.array(z.string()).describe('List of packages to install (e.g., ["numpy", "pandas"]).'),
+    }),
+}, async ({ packages }) => {
+    try {
+        const output = await repl.pipInstall(packages);
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: `Successfully installed packages: ${packages.join(', ')}\n\n${output}`,
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return {
+            isError: true,
+            content: [
+                {
+                    type: 'text',
+                    text: `Error installing packages: ${error.message}`,
+                },
+            ],
+        };
+    }
+});
 server.registerTool('reset_repl', {
     description: 'Resets the current Python REPL session, clearing all variables, functions, and imports.',
     inputSchema: z.object({}),
@@ -201,6 +309,41 @@ server.registerTool('reset_repl', {
             {
                 type: 'text',
                 text: 'REPL session has been reset.',
+            },
+        ],
+    };
+});
+server.registerTool('cleanup_repl', {
+    description: 'Cleans up temporary files and workspace artifacts.',
+    inputSchema: z.object({
+        all: z.boolean().optional().describe('If true, also clears the workspace directory. Otherwise only clears the tmp directory.'),
+    }),
+}, async ({ all }) => {
+    const tmpDir = path.join(process.cwd(), 'tmp');
+    const workspaceDir = path.join(process.cwd(), 'workspace');
+    let msg = '';
+    if (fs.existsSync(tmpDir)) {
+        const files = fs.readdirSync(tmpDir);
+        for (const file of files)
+            fs.unlinkSync(path.join(tmpDir, file));
+        msg += `Cleared ${files.length} files from tmp.\n`;
+    }
+    if (all && fs.existsSync(workspaceDir)) {
+        const files = fs.readdirSync(workspaceDir);
+        for (const file of files) {
+            const p = path.join(workspaceDir, file);
+            if (fs.lstatSync(p).isDirectory())
+                fs.rmSync(p, { recursive: true });
+            else
+                fs.unlinkSync(p);
+        }
+        msg += `Cleared ${files.length} items from workspace.\n`;
+    }
+    return {
+        content: [
+            {
+                type: 'text',
+                text: msg || 'Nothing to cleanup.',
             },
         ],
     };

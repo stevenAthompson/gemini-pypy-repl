@@ -5,21 +5,32 @@ A python sandbox for gemini cli providing REPL like testing and debugging using 
 ## Tools
 
 ### pypy_repl
-Executes Python code in a persistent PyPy/Python REPL session and returns the output. The session maintains state (variables, functions, imports) between calls.
+Executes Python code in a persistent PyPy/Python REPL session and returns the output. Maintains state between calls. Runs inside a dedicated virtual environment and workspace.
 - `code`: The Python code to execute.
 - `async`: (Optional) If true, runs code in the background and notifies via tmux when done. Use for long-running tasks.
+
+### pip_install
+Installs Python packages into the REPL virtual environment.
+- `packages`: List of packages to install (e.g., ["numpy", "pandas"]).
 
 ### reset_repl
 Resets the current Python REPL session, clearing all variables, functions, and imports.
 
+### cleanup_repl
+Cleans up temporary files and workspace artifacts.
+- `all`: (Optional) If true, also clears the workspace directory. Otherwise only clears the tmp directory.
+
 ## Agent Guidelines
 
-- **Persistent State**: Use the persistent nature of the REPL to build complex logic across multiple turns. Define classes or functions in one turn and use them in subsequent turns.
-- **Auto-Printing**: The REPL automatically prints the value of the last expression in a block (similar to a Jupyter notebook or standard REPL). You don't always need to use `print()`.
-- **Debugging**: If a script fails, use the REPL to inspect variables or test small snippets to identify the root cause.
-- **PyPy Advantage**: This environment is ideal for computationally intensive tasks where PyPy's JIT provides a significant speedup over standard CPython.
-- **Safe Encoding**: Code is transported using base64 encoding, so you can safely use any characters or complex multiline strings without worrying about shell escaping issues.
-- **Error Handling**: Standard error output is captured and returned. Use it to refine your code if it fails. 
+- **Environment Isolation**: You are running in a dedicated virtual environment (`.venv`) and workspace (`workspace/`). You have full permissions to install packages and write files here.
+- **Self-Service Dependencies**: If you need a library that isn't installed, use `pip_install`. Don't ask the user to install it for you.
+- **Workspace Hygiene**: Use `cleanup_repl(all=true)` when you are done with a complex project to keep the user's system tidy.
+- **Persistent State**: Use the persistent nature of the REPL to build complex logic across multiple turns.
+- **Auto-Printing**: The REPL automatically prints the value of the last expression in a block.
+- **Debugging**: If a script fails, use the REPL to inspect variables or test small snippets.
+- **PyPy Advantage**: This environment is ideal for computationally intensive tasks.
+- **Safe Encoding**: Code is transported using base64 encoding.
+- **Error Handling**: Standard error output is captured and returned. 
 
 
 # IMPORTANT NOTES
