@@ -10,6 +10,11 @@ Executes Python code in a persistent PyPy/Python REPL session and returns the ou
 - `async`: (Optional) If true, runs code in the background and notifies via tmux when done. Use for long-running tasks.
 - `timeout`: (Optional) Execution timeout in milliseconds (default 30000). Ignored if async is true.
 
+**Key Features:**
+- **State Persistence**: Variables and functions persist between `pypy_repl` calls unless the extension is restarted (e.g., after an update).
+- **Project Access**: A `PROJECT_ROOT` variable is automatically injected, allowing access to files outside the workspace (e.g., `open(f"{PROJECT_ROOT}/logs/app.log")`).
+- **Clean Output**: Standard REPL prompts (`>>>`, `...`) are automatically filtered from stderr.
+
 ### pip_install
 Installs Python packages into the REPL virtual environment.
 - `packages`: List of packages to install (e.g., ["numpy", "pandas"]).
