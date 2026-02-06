@@ -6,7 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { spawn, ChildProcess, spawnSync } from 'child_process';
+import { spawn, ChildProcess, execSync, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
@@ -76,16 +76,22 @@ export class ReplManager extends EventEmitter {
         this.actualExecutable = await this.ensureVenv();
         this.ensureWorkspace();
 
-        const projectRoot = process.cwd().replace(/\\/g, '\\\\');
+        const rawProjectRoot = process.env.GEMINI_PROJECT_ROOT || process.env.MCP_PROJECT_ROOT || process.cwd();
+        const projectRoot = rawProjectRoot.replace(/\\/g, '\\\\');
 
+        console.error('Spawning REPL with:', this.actualExecutable);
         this.process = spawn(this.actualExecutable, ['-i', '-u'], {
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd: this.workspacePath,
             env: { 
                 ...process.env, 
                 PYTHONUNBUFFERED: '1',
-                PROJECT_ROOT: projectRoot // Inject as env var too
+                PROJECT_ROOT: projectRoot
             }
+        });
+
+        this.process.on('error', (err) => {
+            console.error('Spawn error:', err);
         });
 
         this.process.stdout?.on('data', (data) => {
@@ -107,12 +113,10 @@ import sys
 import os
 import builtins
 
-# Setup environment
 sys.path.append(os.getcwd())
 PROJECT_ROOT = os.environ.get('PROJECT_ROOT', '${projectRoot}')
 builtins.PROJECT_ROOT = PROJECT_ROOT
 
-# Disable interactive prompts for cleaner output
 sys.ps1 = ''
 sys.ps2 = ''
 
@@ -123,8 +127,8 @@ def __gemini_run_repl(code_b64):
         tree = ast.parse(code)
         if not tree.body: return
         exec_globals = globals()
-        # Ensure PROJECT_ROOT is in the specific execution scope
-        exec_globals['PROJECT_ROOT'] = PROJECT_ROOT
+        if 'PROJECT_ROOT' not in exec_globals:
+            exec_globals['PROJECT_ROOT'] = builtins.PROJECT_ROOT
         last_node = tree.body[-1]
         if isinstance(last_node, ast.Expr):
             if len(tree.body) > 1:
@@ -184,6 +188,7 @@ print("__REPL_READY__")
             const executable = await this.start();
 
             if (!this.process || this.process.killed) {
+                console.error('REPL process died, restarting...');
                 this.process = null;
                 await this.start();
             }
@@ -212,10 +217,12 @@ print("__REPL_READY__")
                     const lines = data.split('\n');
                     for (const line of lines) {
                         const trimmed = line.trim();
-                        // Filter out headers or obvious interactive traces if any remain
                         if (trimmed === '' || 
+                            /^>{3,}(\s*>{3,})*$/.test(trimmed) || 
+                            /^\.{3,}(\s*\.{3,})*$/.test(trimmed) || 
                             trimmed.startsWith('Python ') || 
-                            trimmed.startsWith('Type "help"')) {
+                            trimmed.startsWith('Type "help"') ||
+                            trimmed.replace(/>/g, '').trim() === '') {
                             continue;
                         }
                         if (stderr.length < this.maxOutputSize) {
@@ -316,7 +323,8 @@ server.registerTool(
             if (result.stdout) output += result.stdout;
             if (result.stderr) {
                 if (output) output += '\n';
-                output += `--- STDERR ---\n${result.stderr}`;
+                output += `--- STDERR ---
+${result.stderr}`;
             }
             if (!output) output = '(No output)';
             output += `\n(Executed using ${result.executable})`;
@@ -343,7 +351,8 @@ server.registerTool(
       if (result.stdout) output += result.stdout;
       if (result.stderr) {
         if (output) output += '\n';
-        output += `--- STDERR ---\n${result.stderr}`;
+        output += `--- STDERR ---
+${result.stderr}`;
       }
       
       const footer = `\n(Executed using ${result.executable})`;
