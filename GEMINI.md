@@ -7,6 +7,7 @@ A python sandbox for gemini cli providing REPL like testing and debugging using 
 ### pypy_repl
 Executes Python code in a persistent PyPy/Python REPL session and returns the output. The session maintains state (variables, functions, imports) between calls.
 - `code`: The Python code to execute.
+- `async`: (Optional) If true, runs code in the background and notifies via tmux when done. Use for long-running tasks.
 
 ### reset_repl
 Resets the current Python REPL session, clearing all variables, functions, and imports.
