@@ -6,7 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { spawn, ChildProcess, execSync, spawnSync } from 'child_process';
+import { spawn, ChildProcess, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
@@ -76,10 +76,16 @@ export class ReplManager extends EventEmitter {
         this.actualExecutable = await this.ensureVenv();
         this.ensureWorkspace();
 
+        const projectRoot = process.cwd().replace(/\\/g, '\\\\');
+
         this.process = spawn(this.actualExecutable, ['-i', '-u'], {
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd: this.workspacePath,
-            env: { ...process.env, PYTHONUNBUFFERED: '1' }
+            env: { 
+                ...process.env, 
+                PYTHONUNBUFFERED: '1',
+                PROJECT_ROOT: projectRoot // Inject as env var too
+            }
         });
 
         this.process.stdout?.on('data', (data) => {
@@ -94,8 +100,6 @@ export class ReplManager extends EventEmitter {
             this.process = null;
         });
 
-        const projectRoot = process.cwd().replace(/\\/g, '\\\\');
-
         const initScript = `
 import ast
 import base64
@@ -103,8 +107,14 @@ import sys
 import os
 import builtins
 
+# Setup environment
 sys.path.append(os.getcwd())
-builtins.PROJECT_ROOT = "${projectRoot}"
+PROJECT_ROOT = os.environ.get('PROJECT_ROOT', '${projectRoot}')
+builtins.PROJECT_ROOT = PROJECT_ROOT
+
+# Disable interactive prompts for cleaner output
+sys.ps1 = ''
+sys.ps2 = ''
 
 def __gemini_run_repl(code_b64):
     try:
@@ -113,8 +123,8 @@ def __gemini_run_repl(code_b64):
         tree = ast.parse(code)
         if not tree.body: return
         exec_globals = globals()
-        if 'PROJECT_ROOT' not in exec_globals:
-            exec_globals['PROJECT_ROOT'] = builtins.PROJECT_ROOT
+        # Ensure PROJECT_ROOT is in the specific execution scope
+        exec_globals['PROJECT_ROOT'] = PROJECT_ROOT
         last_node = tree.body[-1]
         if isinstance(last_node, ast.Expr):
             if len(tree.body) > 1:
@@ -174,7 +184,6 @@ print("__REPL_READY__")
             const executable = await this.start();
 
             if (!this.process || this.process.killed) {
-                console.error('REPL process died, restarting...');
                 this.process = null;
                 await this.start();
             }
@@ -203,9 +212,8 @@ print("__REPL_READY__")
                     const lines = data.split('\n');
                     for (const line of lines) {
                         const trimmed = line.trim();
+                        // Filter out headers or obvious interactive traces if any remain
                         if (trimmed === '' || 
-                            /^>{3,}(\s*>{3,})*$/.test(trimmed) || 
-                            /^\\.{3,}(\s*\\.{3,})*$/.test(trimmed) || 
                             trimmed.startsWith('Python ') || 
                             trimmed.startsWith('Type "help"')) {
                             continue;
