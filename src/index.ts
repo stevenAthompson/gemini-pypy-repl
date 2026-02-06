@@ -116,6 +116,9 @@ builtins.PROJECT_ROOT = "${projectRoot}"
 # Setting sys.stdin to None causes input() to raise RuntimeError immediately
 sys.stdin = None
 
+# Debug: Confirm PROJECT_ROOT is set
+print(f"DEBUG: PROJECT_ROOT initialized to {builtins.PROJECT_ROOT}", file=sys.stderr)
+
 def __gemini_run_repl(code_b64):
     try:
         code = base64.b64decode(code_b64).decode("utf-8").strip()
@@ -124,17 +127,19 @@ def __gemini_run_repl(code_b64):
         tree = ast.parse(code)
         if not tree.body:
             return
-        
+        # Force PROJECT_ROOT into the execution scope to be absolutely sure
+        exec_globals = globals()
+        if 'PROJECT_ROOT' not in exec_globals:
+            exec_globals['PROJECT_ROOT'] = builtins.PROJECT_ROOT
         last_node = tree.body[-1]
         if isinstance(last_node, ast.Expr):
             if len(tree.body) > 1:
-                exec(compile(ast.Module(body=tree.body[:-1], type_ignores=[]), "<string>", "exec"), globals())
-            
-            result = eval(compile(ast.Expression(body=last_node.value), "<string>", "eval"), globals())
+                exec(compile(ast.Module(body=tree.body[:-1], type_ignores=[]), "<string>", "exec"), exec_globals)
+            result = eval(compile(ast.Expression(body=last_node.value), "<string>", "eval"), exec_globals)
             if result is not None:
                 print(repr(result))
         else:
-            exec(compile(tree, "<string>", "exec"), globals())
+            exec(compile(tree, "<string>", "exec"), exec_globals)
     except Exception as e:
         import traceback
         traceback.print_exc(file=sys.stderr)
@@ -220,9 +225,10 @@ print("__REPL_READY__")
                         // Aggressive filter for prompts (>>> or ... repeats)
                         if (trimmed === '' || 
                             /^>{3,}(\s*>{3,})*$/.test(trimmed) || 
-                            /^\.{3,}(\s*\.{3,})*$/.test(trimmed) || 
-                            trimmed.startsWith('Python ') || 
-                            trimmed.startsWith('Type "help"')) {
+                            /^.{3,}(\s*.{3,})*$/.test(trimmed) || 
+                            trimmed.startsWith('Python ')
+                            || trimmed.startsWith('Type "help"') ||
+                            trimmed.replace(/>/g, '').trim() === '') {
                             continue;
                         }
                         if (stderr.length < this.maxOutputSize) {
@@ -331,8 +337,7 @@ server.registerTool(
             if (result.stdout) output += result.stdout;
             if (result.stderr) {
                 if (output) output += '\n';
-                output += `--- STDERR ---
-${result.stderr}`;
+                output += `--- STDERR ---\n${result.stderr}`;
             }
             if (!output) output = '(No output)';
             output += `\n(Executed using ${result.executable})`;
@@ -359,8 +364,7 @@ ${result.stderr}`;
       if (result.stdout) output += result.stdout;
       if (result.stderr) {
         if (output) output += '\n';
-        output += `--- STDERR ---
-${result.stderr}`;
+        output += `--- STDERR ---\n${result.stderr}`;
       }
       
       const footer = `\n(Executed using ${result.executable})`;
