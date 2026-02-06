@@ -106,11 +106,11 @@ import sys
 import os
 import builtins
 
-# Constants for easy access
-PROJECT_ROOT = "${projectRoot}"
-
 # Ensure workspace is in path
 sys.path.append(os.getcwd())
+
+# Inject PROJECT_ROOT into builtins so it's available everywhere
+builtins.PROJECT_ROOT = "${projectRoot}"
 
 # Disable interactive input to prevent hanging
 # Setting sys.stdin to None causes input() to raise RuntimeError immediately
