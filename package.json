@@ -1,0 +1,23 @@
+{
+  "name": "gemini-pypy-repl",
+  "version": "0.1.0",
+  "description": "A python sandbox for gemini cli providing REPL like testing and debugging using PyPy interactively.",
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "tsx tests/test_logic.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.25",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "zod": "^3.22.4"
+  }
+}

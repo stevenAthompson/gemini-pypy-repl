@@ -1,0 +1,11 @@
+{
+  "name": "gemini-pypy-repl",
+  "version": "0.1.0",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "gemini-pypy-repl": {
+      "command": "node",
+      "args": ["${extensionPath}${/}dist${/}index.js"]
+    }
+  }
+}
