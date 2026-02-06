@@ -52,13 +52,11 @@ export class ReplManager extends EventEmitter {
         if (!fs.existsSync(this.venvPath)) {
             console.error('Creating virtual environment in .gemini-repl/venv...');
             const systemPython = await this.findSystemPython();
-            // Use spawnSync to safely handle paths with spaces
             const result = spawnSync(systemPython, ['-m', 'venv', this.venvPath], { stdio: 'inherit' });
             if (result.error) throw result.error;
             if (result.status !== 0) throw new Error(`Failed to create venv. Exit code: ${result.status}`);
         }
 
-        // Determine venv python path (windows vs linux)
         const venvPython = process.platform === 'win32' 
             ? path.join(this.venvPath, 'Scripts', 'python.exe')
             : path.join(this.venvPath, 'bin', 'python');
@@ -96,7 +94,6 @@ export class ReplManager extends EventEmitter {
             this.process = null;
         });
 
-        // Escape backslashes for Windows paths
         const projectRoot = process.cwd().replace(/\\/g, '\\\\');
 
         const initScript = `
@@ -106,28 +103,15 @@ import sys
 import os
 import builtins
 
-# Ensure workspace is in path
 sys.path.append(os.getcwd())
-
-# Inject PROJECT_ROOT into builtins so it's available everywhere
 builtins.PROJECT_ROOT = "${projectRoot}"
-
-# Disable interactive input to prevent hanging
-# Setting sys.stdin to None causes input() to raise RuntimeError immediately
-sys.stdin = None
-
-# Debug: Confirm PROJECT_ROOT is set
-print(f"DEBUG: PROJECT_ROOT initialized to {builtins.PROJECT_ROOT}", file=sys.stderr)
 
 def __gemini_run_repl(code_b64):
     try:
         code = base64.b64decode(code_b64).decode("utf-8").strip()
-        if not code:
-            return
+        if not code: return
         tree = ast.parse(code)
-        if not tree.body:
-            return
-        # Force PROJECT_ROOT into the execution scope to be absolutely sure
+        if not tree.body: return
         exec_globals = globals()
         if 'PROJECT_ROOT' not in exec_globals:
             exec_globals['PROJECT_ROOT'] = builtins.PROJECT_ROOT
@@ -148,7 +132,6 @@ print("__REPL_READY__")
 `;
         await this.writeStdin(initScript + '\n');
 
-        // Wait for ready marker
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 cleanup();
@@ -190,10 +173,9 @@ print("__REPL_READY__")
         try {
             const executable = await this.start();
 
-            // Check if process is still alive
             if (!this.process || this.process.killed) {
                 console.error('REPL process died, restarting...');
-                this.process = null; // Force restart
+                this.process = null;
                 await this.start();
             }
 
@@ -209,7 +191,6 @@ print("__REPL_READY__")
                     }
                     if (stdout.includes(marker)) {
                         stdout = stdout.replace(marker, '');
-                        // If truncated, add message
                         if (stdout.length >= this.maxOutputSize) {
                             stdout += `\n...[Output truncated to ${this.maxOutputSize} bytes]...`;
                         }
@@ -222,13 +203,11 @@ print("__REPL_READY__")
                     const lines = data.split('\n');
                     for (const line of lines) {
                         const trimmed = line.trim();
-                        // Aggressive filter for prompts (>>> or ... repeats)
                         if (trimmed === '' || 
                             /^>{3,}(\s*>{3,})*$/.test(trimmed) || 
-                            /^.{3,}(\s*.{3,})*$/.test(trimmed) || 
-                            trimmed.startsWith('Python ')
-                            || trimmed.startsWith('Type "help"') ||
-                            trimmed.replace(/>/g, '').trim() === '') {
+                            /^\\.{3,}(\s*\\.{3,})*$/.test(trimmed) || 
+                            trimmed.startsWith('Python ') || 
+                            trimmed.startsWith('Type "help"')) {
                             continue;
                         }
                         if (stderr.length < this.maxOutputSize) {
@@ -249,16 +228,12 @@ print("__REPL_READY__")
                 const b64Code = Buffer.from(code).toString('base64');
                 this.writeStdin(`__gemini_run_repl("${b64Code}")\nprint("${marker}")\n`).catch(err => {
                     cleanup();
-                    // If write fails (EPIPE), it usually means process died.
-                    // We let the next call handle restart, but here we fail.
                     reject(new Error(`Error writing to stdin: ${err.message}`));
                 });
             });
 
-            // Timeout Logic
             const timeoutPromise = new Promise<{ stdout: string; stderr: string; executable: string }>((_, reject) => {
                 timer = setTimeout(() => {
-                    // Send SIGINT to try to break loop
                     if (this.process) this.process.kill('SIGINT');
                     reject(new Error(`Execution timed out after ${timeoutMs}ms`));
                 }, timeoutMs);
@@ -300,7 +275,6 @@ const server = new McpServer({
   version: '0.2.0',
 });
 
-// Helper to spawn notification worker
 function notifyCompletion(id: string, exitCode: number, outputPath: string) {
     const currentFile = fileURLToPath(import.meta.url);
     const scriptDir = path.dirname(currentFile);
@@ -329,9 +303,6 @@ server.registerTool(
         if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
         const outputPath = path.join(tmpDir, `gemini_repl_${id}.txt`);
         
-        // Pass a very long timeout for async, or handle it differently.
-        // Since we don't await, the Promise.race in execute will run in background.
-        // We set a 1-hour timeout for async tasks.
         repl.execute(code, 3600000).then((result) => {
             let output = '';
             if (result.stdout) output += result.stdout;
