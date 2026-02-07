@@ -2,7 +2,12 @@
 
 **Give your Gemini CLI agent a real Python brain with self-managed environments.**
 
-This extension provides a persistent, stateful Python (or PyPy) REPL environment isolated within a dedicated virtual environment and workspace. It allows the Gemini agent to execute code, install packages, and manage data safely and efficiently.
+This extension provides a persistent, stateful Python (or PyPy) REPL environment isolated within a dedicated virtual environment and workspace. It allows the Gemini agent to execute code, install packages, and manage data safely and efficiently. IE - Gemini can whip up tiny python scripts on the fly and execute them in a local container for small tools.
+
+Gemini seems to really love using it and actually ASKED me to create this extension. Now it can make it's own tools on the fly!
+
+<img width="3820" height="907" alt="image" src="https://github.com/user-attachments/assets/b906da68-3974-42da-812d-d664154eb362" />
+
 
 ## Why use this?
 
@@ -28,7 +33,7 @@ gemini extension install https://github.com/stevenAthompson/gemini-pypy-repl
 
 *   **Node.js**: Required to run the extension.
 *   **Python**: Requires `pypy3` or `python3` installed to bootstrap the virtual environment.
-*   **Tmux**: Required for the `async` background notification feature.
+*   **Tmux**: Required for the `async` background notification feature. Use the shell script in the root of this project to launch Gemini CLI if you want async to work. 
 
 ## Usage
 
