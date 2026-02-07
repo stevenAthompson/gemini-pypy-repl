@@ -6,7 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { spawn, ChildProcess, execSync, spawnSync } from 'child_process';
+import { spawn, ChildProcess, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
@@ -30,6 +30,11 @@ export class ReplManager extends EventEmitter {
         if (!fs.existsSync(this.baseDir)) {
             fs.mkdirSync(this.baseDir, { recursive: true });
         }
+    }
+
+    private getProjectRoot(): string {
+        const raw = process.env.GEMINI_PROJECT_ROOT || process.env.MCP_PROJECT_ROOT || process.cwd();
+        return raw.replace(/\\/g, '\\');
     }
 
     private async findSystemPython(): Promise<string> {
@@ -76,10 +81,8 @@ export class ReplManager extends EventEmitter {
         this.actualExecutable = await this.ensureVenv();
         this.ensureWorkspace();
 
-        const rawProjectRoot = process.env.GEMINI_PROJECT_ROOT || process.env.MCP_PROJECT_ROOT || process.cwd();
-        const projectRoot = rawProjectRoot.replace(/\\/g, '\\\\');
+        const projectRoot = this.getProjectRoot();
 
-        console.error('Spawning REPL with:', this.actualExecutable);
         this.process = spawn(this.actualExecutable, ['-i', '-u'], {
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd: this.workspacePath,
@@ -88,10 +91,6 @@ export class ReplManager extends EventEmitter {
                 PYTHONUNBUFFERED: '1',
                 PROJECT_ROOT: projectRoot
             }
-        });
-
-        this.process.on('error', (err) => {
-            console.error('Spawn error:', err);
         });
 
         this.process.stdout?.on('data', (data) => {
@@ -114,21 +113,25 @@ import os
 import builtins
 
 sys.path.append(os.getcwd())
-PROJECT_ROOT = os.environ.get('PROJECT_ROOT', '${projectRoot}')
-builtins.PROJECT_ROOT = PROJECT_ROOT
 
-sys.ps1 = ''
-sys.ps2 = ''
+# Silencing prompts
+try:
+    sys.ps1 = ''
+    sys.ps2 = ''
+except:
+    pass
 
-def __gemini_run_repl(code_b64):
+def __gemini_run_repl(code_b64, project_root):
     try:
         code = base64.b64decode(code_b64).decode("utf-8").strip()
         if not code: return
         tree = ast.parse(code)
         if not tree.body: return
+        
         exec_globals = globals()
-        if 'PROJECT_ROOT' not in exec_globals:
-            exec_globals['PROJECT_ROOT'] = builtins.PROJECT_ROOT
+        # Explicit injection into the execution scope
+        exec_globals['PROJECT_ROOT'] = project_root
+        
         last_node = tree.body[-1]
         if isinstance(last_node, ast.Expr):
             if len(tree.body) > 1:
@@ -147,11 +150,8 @@ print("__REPL_READY__")
         await this.writeStdin(initScript + '\n');
 
         return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                cleanup();
-                reject(new Error('Timed out waiting for REPL startup'));
-            }, 10000);
-
+            let startupStderr = '';
+            const onStderr = (data: string) => { startupStderr += data; };
             const onStdout = (data: string) => {
                 if (data.includes('__REPL_READY__')) {
                     cleanup();
@@ -159,12 +159,19 @@ print("__REPL_READY__")
                 }
             };
 
+            const timeout = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Timed out waiting for REPL startup. Stderr: ${startupStderr}`));
+            }, 10000);
+
             const cleanup = () => {
                 clearTimeout(timeout);
                 this.removeListener('stdout', onStdout);
+                this.removeListener('stderr', onStderr);
             };
 
             this.on('stdout', onStdout);
+            this.on('stderr', onStderr);
         });
     }
 
@@ -188,7 +195,6 @@ print("__REPL_READY__")
             const executable = await this.start();
 
             if (!this.process || this.process.killed) {
-                console.error('REPL process died, restarting...');
                 this.process = null;
                 await this.start();
             }
@@ -219,10 +225,9 @@ print("__REPL_READY__")
                         const trimmed = line.trim();
                         if (trimmed === '' || 
                             /^>{3,}(\s*>{3,})*$/.test(trimmed) || 
-                            /^\.{3,}(\s*\.{3,})*$/.test(trimmed) || 
-                            trimmed.startsWith('Python ') || 
-                            trimmed.startsWith('Type "help"') ||
-                            trimmed.replace(/>/g, '').trim() === '') {
+                            /^\\.{3,}(\s*\\.{3,})*$/.test(trimmed) || 
+                            trimmed.startsWith('Python ')
+                            ) {
                             continue;
                         }
                         if (stderr.length < this.maxOutputSize) {
@@ -241,7 +246,8 @@ print("__REPL_READY__")
                 this.on('stderr', onStderr);
 
                 const b64Code = Buffer.from(code).toString('base64');
-                this.writeStdin(`__gemini_run_repl("${b64Code}")\nprint("${marker}")\n`).catch(err => {
+                const projectRoot = this.getProjectRoot();
+                this.writeStdin(`__gemini_run_repl("${b64Code}", "${projectRoot}")\nprint("${marker}")\n`).catch(err => {
                     cleanup();
                     reject(new Error(`Error writing to stdin: ${err.message}`));
                 });
@@ -339,7 +345,8 @@ ${result.stderr}`;
             content: [
                 {
                     type: 'text',
-                    text: `[${id}] Task started in background. I will notify you via tmux when it completes.\nOutput path: ${outputPath}`,
+                    text: `[${id}] Task started in background. I will notify you via tmux when it completes.
+Output path: ${outputPath}`,
                 },
             ],
         };
@@ -394,7 +401,9 @@ server.registerTool(
         content: [
           {
             type: 'text',
-            text: `Successfully installed packages: ${packages.join(', ')}\n\n${output}`,
+            text: `Successfully installed packages: ${packages.join(', ')}
+
+${output}`,
           },
         ],
       };
