@@ -1,6 +1,6 @@
 {
   "name": "gemini-pypy-repl",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "A python sandbox for gemini cli providing REPL like testing and debugging using PyPy interactively.",
   "author": "",
   "license": "MIT",
